@@ -39,3 +39,12 @@ class DashboardResponse(BaseModel):
     period: int
     cards: List[MetricCard]
     series: List[MetricSeries]
+
+
+class AlertEventResponse(BaseModel):
+    instance_id: str = Field(alias="instanceId")
+    metric_key: str = Field(alias="metricKey")
+    metric_label: str = Field(alias="metricLabel")
+    threshold_mbps: float = Field(alias="thresholdMbps")
+    current_value: float = Field(alias="currentValue")
+    timestamp: datetime

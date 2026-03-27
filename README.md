@@ -7,6 +7,12 @@
 - 入带宽 / 出带宽
 - 磁盘使用率
 
+并支持后台带宽告警：
+
+- 对指定实例定时巡检公网入/出带宽
+- 任一检查点超过 `50 Mbps` 即记录告警
+- 配置 SMTP 后自动发送告警邮件
+
 ## 目录结构
 
 ```text
@@ -31,6 +37,19 @@ uvicorn app.main:app --reload --port 8000
 - `TENCENT_SECRET_KEY`
 - `TENCENT_REGION`
 - `DEFAULT_INSTANCE_ID`
+- `MONITOR_INSTANCE_IDS`
+
+如果要开启邮件告警，还需要配置：
+
+- `BANDWIDTH_ALERT_THRESHOLD_MBPS`
+- `BANDWIDTH_ALERT_POLL_SECONDS`
+- `BANDWIDTH_ALERT_RECIPIENT`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `SMTP_USE_SSL`
 
 ## 前端启动
 
@@ -65,3 +84,4 @@ npm run dev
 - 前端不直接访问腾讯云 API，避免泄露密钥。
 - 后端统一聚合多个指标，后续接缓存和告警会更方便。
 - 当前实现只面向 `QCE/CVM`。
+- 带宽告警日志默认写入 `backend/data/bandwidth_alerts.jsonl`。

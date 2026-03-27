@@ -17,6 +17,7 @@ class TencentMonitorClient:
             settings.tencent_secret_key,
         )
         self._client = monitor_client.MonitorClient(self._credential, settings.tencent_region)
+        self._client.request.conn._session.trust_env = False
 
     def get_monitor_data(
         self,

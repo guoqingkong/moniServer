@@ -14,3 +14,8 @@ export async function fetchDashboard(params) {
   const { data } = await http.get('/api/monitor/dashboard', { params })
   return data
 }
+
+export async function fetchRecentAlerts(params) {
+  const { data } = await http.get('/api/monitor/alerts/recent', { params })
+  return data
+}

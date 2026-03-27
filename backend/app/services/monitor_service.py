@@ -74,6 +74,26 @@ class MonitorService:
             series=series,
         )
 
+    def get_metric_series(
+        self,
+        instance_id: str,
+        metric_key: str,
+        start_time: datetime,
+        end_time: datetime,
+        period: int,
+    ) -> MetricSeries:
+        definition = next((item for item in METRICS if item.key == metric_key), None)
+        if definition is None:
+            raise ValueError(f"Unsupported metric key: {metric_key}")
+
+        return self._build_series(
+            definition=definition,
+            instance_id=instance_id,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
     def _build_series(
         self,
         definition: MetricDefinition,

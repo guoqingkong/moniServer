@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import Settings, get_settings
 from app.clients.tencent_monitor import TencentMonitorClient
-from app.schemas.monitor import DashboardResponse
+from app.schemas.monitor import AlertEventResponse, DashboardResponse
+from app.services.bandwidth_alert_service import BandwidthAlertService
+from app.services.email_service import EmailService
 from app.services.monitor_service import MonitorService
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
@@ -21,6 +23,12 @@ def get_monitor_service(settings: Settings = Depends(get_settings)) -> MonitorSe
         raise HTTPException(status_code=500, detail="Tencent Cloud credentials are not configured.")
     client = TencentMonitorClient(settings)
     return MonitorService(client)
+
+
+def get_bandwidth_alert_service(settings: Settings = Depends(get_settings)) -> BandwidthAlertService:
+    monitor_service = get_monitor_service(settings)
+    email_service = EmailService(settings)
+    return BandwidthAlertService(settings, monitor_service, email_service)
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -52,3 +60,11 @@ def get_monitor_config(settings: Settings = Depends(get_settings)) -> dict:
         "supportedMetrics": ["cpu", "memory", "network_in", "network_out", "disk_usage"],
         "defaultRangeHours": 6,
     }
+
+
+@router.get("/alerts/recent", response_model=list[AlertEventResponse])
+def get_recent_alerts(
+    limit: int = Query(default=20, ge=1, le=100),
+    service: BandwidthAlertService = Depends(get_bandwidth_alert_service),
+) -> list[AlertEventResponse]:
+    return service.list_recent_events(limit=limit)
