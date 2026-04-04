@@ -69,6 +69,24 @@ const analysisPresets = [
   },
 ]
 
+const metricMeta = {
+  cvm: {
+    cpu: { label: 'CPU 使用率', unit: '%' },
+    memory: { label: '内存使用率', unit: '%' },
+    network_in: { label: '公网入带宽', unit: 'Mbps' },
+    network_out: { label: '公网出带宽', unit: 'Mbps' },
+    disk_usage: { label: '磁盘使用率', unit: '%' },
+  },
+  cos: {
+    storage_size: { label: '标准存储容量', unit: 'MB' },
+    object_count: { label: '标准对象数量', unit: '个' },
+    network_in: { label: '外网上行带宽', unit: 'Mbps' },
+    network_out: { label: '外网下行带宽', unit: 'Mbps' },
+    request_get: { label: 'GET 请求数', unit: '次' },
+    request_put: { label: 'PUT 请求数', unit: '次' },
+  },
+}
+
 const lastUpdated = computed(() => {
   const timestamps = dashboards.value
     .map((item) => item.dashboard?.endTime)
@@ -164,6 +182,52 @@ function buildAnalysisChart(resourceLabel, comparison, currentSeries, previousSe
     previousSeries,
     durationMs: preset.durationMs,
     presetDescription: preset.description,
+  }
+}
+
+function buildEmptySeries(resourceType, resourceId, metricKey, startTime, endTime) {
+  const meta = metricMeta[resourceType]?.[metricKey] || { label: metricKey, unit: '' }
+  return {
+    resourceType,
+    resourceId,
+    metricKey,
+    metricLabel: meta.label,
+    unit: meta.unit,
+    startTime: toIsoString(startTime),
+    endTime: toIsoString(endTime),
+    points: [],
+    latest: null,
+    average: null,
+    peak: null,
+  }
+}
+
+function buildEmptyComparison(resourceType, resourceId, metricKey, presetWindow) {
+  const meta = metricMeta[resourceType]?.[metricKey] || { label: metricKey, unit: '' }
+  return {
+    resourceType,
+    resourceId,
+    metricKey,
+    metricLabel: meta.label,
+    unit: meta.unit,
+    currentWindow: {
+      startTime: toIsoString(presetWindow.currentStart),
+      endTime: toIsoString(presetWindow.end),
+      latest: null,
+      average: null,
+      peak: null,
+      pointCount: 0,
+    },
+    previousWindow: {
+      startTime: toIsoString(presetWindow.previousStart),
+      endTime: toIsoString(presetWindow.currentStart),
+      latest: null,
+      average: null,
+      peak: null,
+      pointCount: 0,
+    },
+    averageDelta: null,
+    peakDelta: null,
   }
 }
 
@@ -269,7 +333,7 @@ async function loadMetricComparisons() {
 
       return {
         instance,
-        metrics: metrics.filter(Boolean),
+        metrics,
       }
     }),
   )
@@ -299,7 +363,7 @@ async function loadCosMetricComparisons() {
 
       return {
         bucket,
-        metrics: metrics.filter(Boolean),
+        metrics,
       }
     }),
   )
@@ -309,37 +373,33 @@ async function loadCosMetricComparisons() {
 }
 
 async function loadAnalysisMetricBundle({ resourceType, resourceId, metricKey, resourceLabel, presetWindow }) {
-  try {
-    const [comparison, currentSeries, previousSeries] = await Promise.all([
-      fetchMetricComparison({
-        resourceType,
-        resourceId,
-        metricKey,
-        currentStart: toIsoString(presetWindow.currentStart),
-        currentEnd: toIsoString(presetWindow.end),
-        previousStart: toIsoString(presetWindow.previousStart),
-        previousEnd: toIsoString(presetWindow.currentStart),
-      }),
-      fetchMetricHistory({
-        resourceType,
-        resourceId,
-        metricKey,
-        startTime: toIsoString(presetWindow.currentStart),
-        endTime: toIsoString(presetWindow.end),
-      }),
-      fetchMetricHistory({
-        resourceType,
-        resourceId,
-        metricKey,
-        startTime: toIsoString(presetWindow.previousStart),
-        endTime: toIsoString(presetWindow.currentStart),
-      }),
-    ])
+  const [comparison, currentSeries, previousSeries] = await Promise.all([
+    fetchMetricComparison({
+      resourceType,
+      resourceId,
+      metricKey,
+      currentStart: toIsoString(presetWindow.currentStart),
+      currentEnd: toIsoString(presetWindow.end),
+      previousStart: toIsoString(presetWindow.previousStart),
+      previousEnd: toIsoString(presetWindow.currentStart),
+    }).catch(() => buildEmptyComparison(resourceType, resourceId, metricKey, presetWindow)),
+    fetchMetricHistory({
+      resourceType,
+      resourceId,
+      metricKey,
+      startTime: toIsoString(presetWindow.currentStart),
+      endTime: toIsoString(presetWindow.end),
+    }).catch(() => buildEmptySeries(resourceType, resourceId, metricKey, presetWindow.currentStart, presetWindow.end)),
+    fetchMetricHistory({
+      resourceType,
+      resourceId,
+      metricKey,
+      startTime: toIsoString(presetWindow.previousStart),
+      endTime: toIsoString(presetWindow.currentStart),
+    }).catch(() => buildEmptySeries(resourceType, resourceId, metricKey, presetWindow.previousStart, presetWindow.currentStart)),
+  ])
 
-    return buildAnalysisChart(resourceLabel, comparison, currentSeries, previousSeries, presetWindow.preset)
-  } catch {
-    return null
-  }
+  return buildAnalysisChart(resourceLabel, comparison, currentSeries, previousSeries, presetWindow.preset)
 }
 
 async function refreshVisibleAnalysis() {
