@@ -15,6 +15,11 @@ export async function fetchDashboard(params) {
   return data
 }
 
+export async function fetchCosDashboard(params) {
+  const { data } = await http.get('/api/monitor/cos/dashboard', { params })
+  return data
+}
+
 export async function fetchRecentAlerts(params) {
   const { data } = await http.get('/api/monitor/alerts/recent', { params })
   return data

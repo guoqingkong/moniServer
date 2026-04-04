@@ -7,6 +7,7 @@ from app.config import Settings, get_settings
 from app.clients.tencent_monitor import TencentMonitorClient
 from app.schemas.monitor import AlertEventResponse, DashboardResponse
 from app.services.bandwidth_alert_service import BandwidthAlertService
+from app.services.cos_monitor_service import CosMonitorService
 from app.services.email_service import EmailService
 from app.services.monitor_service import MonitorService
 
@@ -15,6 +16,10 @@ router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 AVAILABLE_INSTANCES = [
     {"id": "ins-ltludxxq", "name": "入口", "region": "ap-nanjing"},
     {"id": "ins-da3g9cte", "name": "数据", "region": "ap-nanjing"},
+]
+AVAILABLE_COS_BUCKETS = [
+    {"name": "adp-1333737643", "label": "adp", "region": "ap-nanjing"},
+    {"name": "xmmj-1333737643", "label": "xmmj", "region": "ap-nanjing"},
 ]
 
 
@@ -29,6 +34,11 @@ def get_bandwidth_alert_service(settings: Settings = Depends(get_settings)) -> B
     monitor_service = get_monitor_service(settings)
     email_service = EmailService(settings)
     return BandwidthAlertService(settings, monitor_service, email_service)
+
+
+def get_cos_monitor_service(settings: Settings = Depends(get_settings)) -> CosMonitorService:
+    client = TencentMonitorClient(settings, region="ap-guangzhou")
+    return CosMonitorService(client)
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -57,9 +67,31 @@ def get_monitor_config(settings: Settings = Depends(get_settings)) -> dict:
     return {
         "defaultInstanceId": settings.default_instance_id,
         "instances": AVAILABLE_INSTANCES,
+        "cosBuckets": AVAILABLE_COS_BUCKETS,
         "supportedMetrics": ["cpu", "memory", "network_in", "network_out", "disk_usage"],
         "defaultRangeHours": 6,
     }
+
+
+@router.get("/cos/dashboard", response_model=DashboardResponse)
+def get_cos_dashboard(
+    bucket_name: str = Query(alias="bucketName"),
+    start_time: Optional[datetime] = Query(default=None, alias="startTime"),
+    end_time: Optional[datetime] = Query(default=None, alias="endTime"),
+    period: Optional[int] = Query(default=None, ge=300, le=3600),
+    range_hours: int = Query(default=24, alias="rangeHours", ge=1, le=168),
+    service: CosMonitorService = Depends(get_cos_monitor_service),
+) -> DashboardResponse:
+    try:
+        return service.get_dashboard(
+            bucket_name=bucket_name,
+            start_time=start_time,
+            end_time=end_time,
+            period=period,
+            range_hours=range_hours,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/alerts/recent", response_model=list[AlertEventResponse])

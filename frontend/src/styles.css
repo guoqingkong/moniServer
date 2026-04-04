@@ -185,6 +185,32 @@ select {
   background: rgba(127, 29, 29, 0.45);
 }
 
+.view-tabs {
+  margin-top: 22px;
+  display: flex;
+  gap: 12px;
+}
+
+.tab-button {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 180ms ease, transform 180ms ease, color 180ms ease;
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(94, 234, 212, 0.22), rgba(20, 184, 166, 0.26));
+  color: #f8fafc;
+  border-color: rgba(94, 234, 212, 0.35);
+}
+
+.tab-button:hover {
+  transform: translateY(-1px);
+}
+
 .comparison-panel {
   margin-top: 22px;
   border: 1px solid rgba(148, 163, 184, 0.16);
@@ -297,6 +323,10 @@ select {
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 60px rgba(2, 8, 23, 0.32);
   padding: 24px;
+}
+
+.cos-panel {
+  background: rgba(10, 30, 36, 0.72);
 }
 
 .alerts-header {
@@ -436,6 +466,10 @@ select {
   gap: 16px;
 }
 
+.metric-grid-cos {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric-card {
   border-radius: 24px;
   padding: 22px;
@@ -516,6 +550,7 @@ select {
   .comparison-grid,
   .chart-grid,
   .metric-grid,
+  .metric-grid-cos,
   .instance-header {
     grid-template-columns: 1fr;
   }
@@ -530,6 +565,10 @@ select {
 
   .comparison-title-row {
     display: grid;
+  }
+
+  .view-tabs {
+    flex-wrap: wrap;
   }
 
   .alerts-header,

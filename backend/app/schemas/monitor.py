@@ -4,7 +4,17 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-MetricKey = Literal["cpu", "memory", "network_in", "network_out", "disk_usage"]
+MetricKey = Literal[
+    "cpu",
+    "memory",
+    "network_in",
+    "network_out",
+    "disk_usage",
+    "storage_size",
+    "object_count",
+    "request_get",
+    "request_put",
+]
 
 
 class TimePoint(BaseModel):

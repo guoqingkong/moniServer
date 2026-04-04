@@ -1,17 +1,20 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { fetchDashboard, fetchMonitorConfig, fetchRecentAlerts } from '../api/monitor'
+import { fetchCosDashboard, fetchDashboard, fetchMonitorConfig, fetchRecentAlerts } from '../api/monitor'
 import MetricCard from '../components/MetricCard.vue'
 import MetricChart from '../components/MetricChart.vue'
 
 const instanceOptions = ref([])
+const cosBuckets = ref([])
 const rangeHours = ref(6)
 const loading = ref(false)
 const errorMessage = ref('')
 const dashboards = ref([])
+const cosDashboards = ref([])
 const recentAlerts = ref([])
 const autoRefreshEnabled = ref(true)
+const activeTab = ref('cvm')
 const autoRefreshSeconds = 60
 let refreshTimer = null
 
@@ -24,6 +27,7 @@ const quickRanges = [
 const lastUpdated = computed(() => {
   const timestamps = dashboards.value
     .map((item) => item.dashboard?.endTime)
+    .concat(cosDashboards.value.map((item) => item.dashboard?.endTime))
     .filter(Boolean)
 
   if (!timestamps.length) {
@@ -96,6 +100,7 @@ function startAutoRefresh() {
 async function loadConfig() {
   const config = await fetchMonitorConfig()
   instanceOptions.value = config.instances || []
+  cosBuckets.value = config.cosBuckets || []
   rangeHours.value = config.defaultRangeHours || rangeHours.value
 }
 
@@ -109,7 +114,7 @@ async function loadDashboard() {
   errorMessage.value = ''
 
   try {
-    const [results, alerts] = await Promise.all([
+    const [results, alerts, cosResults] = await Promise.all([
       Promise.all(
         instanceOptions.value.map(async (instance) => {
           const dashboard = await fetchDashboard({
@@ -124,10 +129,24 @@ async function loadDashboard() {
         }),
       ),
       fetchRecentAlerts({ limit: 20 }),
+      Promise.all(
+        cosBuckets.value.map(async (bucket) => {
+          const dashboard = await fetchCosDashboard({
+            bucketName: bucket.name,
+            rangeHours: Math.max(rangeHours.value, 24),
+          })
+
+          return {
+            bucket,
+            dashboard,
+          }
+        }),
+      ),
     ])
 
     dashboards.value = results
     recentAlerts.value = alerts
+    cosDashboards.value = cosResults
   } catch (error) {
     errorMessage.value = error?.response?.data?.detail || '监控数据加载失败，请检查后端配置或腾讯云接口返回。'
   } finally {
@@ -163,7 +182,7 @@ onBeforeUnmount(() => {
         <p class="eyebrow">Tencent Cloud CVM</p>
         <h1>实例运行监控面板</h1>
         <p class="hero-text">
-          两台核心服务器同屏展示，统一观察 CPU、内存、网络与存储走势，便于对照入口层与数据层的运行状态。
+          主机监控与对象存储监控共用一页，通过标签切换查看，既保留统一入口，也避免页面过长影响浏览效率。
         </p>
       </div>
       <form class="control-panel" @submit.prevent="loadDashboard">
@@ -206,10 +225,21 @@ onBeforeUnmount(() => {
       <span>最近刷新：{{ lastUpdated }}</span>
       <span>范围：最近 {{ rangeHours }} 小时</span>
       <span>实例数：{{ dashboards.length }}</span>
+      <span>COS 桶数：{{ cosDashboards.length }}</span>
     </section>
 
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
+    <section class="view-tabs">
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cvm' }" @click="activeTab = 'cvm'">
+        CVM 主机
+      </button>
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cos' }" @click="activeTab = 'cos'">
+        COS 存储
+      </button>
+    </section>
+
+    <template v-if="activeTab === 'cvm'">
     <section v-if="comparisonRows.length" class="comparison-panel">
       <div class="comparison-title-row">
         <div>
@@ -296,5 +326,47 @@ onBeforeUnmount(() => {
       </div>
       <p v-else class="alerts-empty">最近还没有超过 50 Mbps 的公网带宽告警。</p>
     </section>
+    </template>
+
+    <template v-else>
+      <section class="alerts-panel cos-panel">
+        <div class="alerts-header">
+          <div>
+            <p class="comparison-eyebrow">COS Storage Monitor</p>
+            <h2>COS 存储监控</h2>
+          </div>
+          <p class="comparison-note">展示两个 COS bucket 的存储量、对象数、请求数和外网上下行带宽。</p>
+        </div>
+
+        <section class="instance-board">
+          <article v-for="item in cosDashboards" :key="item.bucket.name" class="instance-panel">
+            <header class="instance-header">
+              <div>
+                <p class="instance-tag">{{ item.bucket.region }}</p>
+                <h2>{{ item.bucket.label }}</h2>
+                <p class="instance-meta">{{ item.bucket.name }}</p>
+              </div>
+              <div class="instance-summary">
+                <span>更新时间 {{ new Date(item.dashboard.endTime).toLocaleString('zh-CN') }}</span>
+                <span class="status-chip">COS</span>
+                <strong>{{ item.dashboard.series?.length || 0 }} 个指标</strong>
+              </div>
+            </header>
+
+            <section v-if="item.dashboard?.cards?.length" class="metric-grid metric-grid-cos">
+              <MetricCard v-for="card in item.dashboard.cards" :key="`${item.bucket.name}-${card.key}`" :card="card" />
+            </section>
+
+            <section v-if="item.dashboard?.series?.length" class="chart-grid">
+              <MetricChart
+                v-for="seriesItem in item.dashboard.series"
+                :key="`${item.bucket.name}-${seriesItem.key}`"
+                :series="seriesItem"
+              />
+            </section>
+          </article>
+        </section>
+      </section>
+    </template>
   </main>
 </template>
