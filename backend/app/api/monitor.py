@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import Settings, get_settings
 from app.clients.tencent_monitor import TencentMonitorClient
-from app.schemas.monitor import AlertEventResponse, DashboardResponse
+from app.repositories import MonitorRepository
+from app.schemas.monitor import (
+    AlertEventResponse,
+    DashboardResponse,
+    HistoricalSeriesResponse,
+    MetricComparisonResponse,
+)
 from app.services.bandwidth_alert_service import BandwidthAlertService
 from app.services.cos_monitor_service import CosMonitorService
 from app.services.email_service import EmailService
@@ -27,7 +33,7 @@ def get_monitor_service(settings: Settings = Depends(get_settings)) -> MonitorSe
     if not settings.tencent_secret_id or not settings.tencent_secret_key:
         raise HTTPException(status_code=500, detail="Tencent Cloud credentials are not configured.")
     client = TencentMonitorClient(settings)
-    return MonitorService(client)
+    return MonitorService(client, settings)
 
 
 def get_bandwidth_alert_service(settings: Settings = Depends(get_settings)) -> BandwidthAlertService:
@@ -38,7 +44,11 @@ def get_bandwidth_alert_service(settings: Settings = Depends(get_settings)) -> B
 
 def get_cos_monitor_service(settings: Settings = Depends(get_settings)) -> CosMonitorService:
     client = TencentMonitorClient(settings, region="ap-guangzhou")
-    return CosMonitorService(client)
+    return CosMonitorService(client, settings)
+
+
+def get_monitor_repository(settings: Settings = Depends(get_settings)) -> MonitorRepository:
+    return MonitorRepository(settings)
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -100,3 +110,49 @@ def get_recent_alerts(
     service: BandwidthAlertService = Depends(get_bandwidth_alert_service),
 ) -> list[AlertEventResponse]:
     return service.list_recent_events(limit=limit)
+
+
+@router.get("/history", response_model=HistoricalSeriesResponse)
+def get_history(
+    resource_type: str = Query(alias="resourceType"),
+    resource_id: str = Query(alias="resourceId"),
+    metric_key: str = Query(alias="metricKey"),
+    start_time: datetime = Query(alias="startTime"),
+    end_time: datetime = Query(alias="endTime"),
+    repository: MonitorRepository = Depends(get_monitor_repository),
+) -> HistoricalSeriesResponse:
+    result = repository.get_historical_series(
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metric_key=metric_key,
+        start_time=start_time.isoformat(),
+        end_time=end_time.isoformat(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No historical metric data found for the given query.")
+    return result
+
+
+@router.get("/compare", response_model=MetricComparisonResponse)
+def compare_history(
+    resource_type: str = Query(alias="resourceType"),
+    resource_id: str = Query(alias="resourceId"),
+    metric_key: str = Query(alias="metricKey"),
+    current_start: datetime = Query(alias="currentStart"),
+    current_end: datetime = Query(alias="currentEnd"),
+    previous_start: datetime = Query(alias="previousStart"),
+    previous_end: datetime = Query(alias="previousEnd"),
+    repository: MonitorRepository = Depends(get_monitor_repository),
+) -> MetricComparisonResponse:
+    result = repository.compare_metric_windows(
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metric_key=metric_key,
+        current_start=current_start.isoformat(),
+        current_end=current_end.isoformat(),
+        previous_start=previous_start.isoformat(),
+        previous_end=previous_end.isoformat(),
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No metric comparison data found for the given query.")
+    return result

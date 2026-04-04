@@ -1,7 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import { fetchCosDashboard, fetchDashboard, fetchMonitorConfig, fetchRecentAlerts } from '../api/monitor'
+import {
+  fetchCosDashboard,
+  fetchDashboard,
+  fetchMetricComparison,
+  fetchMetricHistory,
+  fetchMonitorConfig,
+  fetchRecentAlerts,
+} from '../api/monitor'
+import ComparisonTrendChart from '../components/ComparisonTrendChart.vue'
 import MetricCard from '../components/MetricCard.vue'
 import MetricChart from '../components/MetricChart.vue'
 
@@ -13,8 +21,14 @@ const errorMessage = ref('')
 const dashboards = ref([])
 const cosDashboards = ref([])
 const recentAlerts = ref([])
+const metricComparisons = ref([])
+const cosMetricComparisons = ref([])
 const autoRefreshEnabled = ref(true)
-const activeTab = ref('cvm')
+const activeTab = ref('cvm-monitor')
+const cvmAnalysisPreset = ref('30m')
+const cosAnalysisPreset = ref('30m')
+const analysisLoading = ref(false)
+const cosAnalysisLoading = ref(false)
 const autoRefreshSeconds = 60
 let refreshTimer = null
 
@@ -22,6 +36,33 @@ const quickRanges = [
   { label: '1 小时', value: 1 },
   { label: '6 小时', value: 6 },
   { label: '24 小时', value: 24 },
+]
+
+const analysisPresets = [
+  {
+    key: '30m',
+    label: '30 分钟趋势',
+    durationMs: 30 * 60 * 1000,
+    description: '看短时波动和突发流量，适合排查刚发生的抖动。',
+  },
+  {
+    key: '6h',
+    label: '6 小时趋势',
+    durationMs: 6 * 60 * 60 * 1000,
+    description: '看半天内的负载起伏，适合观察班次或业务波峰。',
+  },
+  {
+    key: 'day',
+    label: '日对比',
+    durationMs: 24 * 60 * 60 * 1000,
+    description: '把最近 24 小时和前 24 小时对照，更容易看出全天形态变化。',
+  },
+  {
+    key: 'week',
+    label: '周对比',
+    durationMs: 7 * 24 * 60 * 60 * 1000,
+    description: '看近 7 天和前 7 天的容量与请求变化，适合做趋势判断。',
+  },
 ]
 
 const lastUpdated = computed(() => {
@@ -38,51 +79,57 @@ const lastUpdated = computed(() => {
   return new Date(latestTime).toLocaleString('zh-CN')
 })
 
-const comparisonRows = computed(() => {
-  if (dashboards.value.length < 2) {
-    return []
-  }
-
-  const [left, right] = dashboards.value
-  const leftCards = Object.fromEntries((left.dashboard?.cards || []).map((card) => [card.key, card]))
-  const rightCards = Object.fromEntries((right.dashboard?.cards || []).map((card) => [card.key, card]))
-
-  return ['cpu', 'memory', 'network_in', 'network_out', 'disk_usage']
-    .map((key) => {
-      const leftCard = leftCards[key]
-      const rightCard = rightCards[key]
-      if (!leftCard || !rightCard) {
-        return null
-      }
-
-      const leftValue = leftCard.latest ?? null
-      const rightValue = rightCard.latest ?? null
-      const delta =
-        leftValue === null || rightValue === null
-          ? null
-          : Number((leftValue - rightValue).toFixed(2))
-
-      return {
-        key,
-        label: leftCard.label,
-        unit: leftCard.unit,
-        leftName: left.instance.name,
-        rightName: right.instance.name,
-        leftValue,
-        rightValue,
-        delta,
-        leader:
-          delta === null || delta === 0 ? '持平' : delta > 0 ? left.instance.name : right.instance.name,
-      }
-    })
-    .filter(Boolean)
-})
-
 function formatValue(value) {
   if (value === null || value === undefined) {
     return '--'
   }
   return Number(value).toFixed(2)
+}
+
+function toIsoString(date) {
+  return new Date(date.getTime() - date.getMilliseconds()).toISOString().replace('Z', '+00:00')
+}
+
+function formatDelta(value) {
+  if (value === null || value === undefined) {
+    return '--'
+  }
+  return `${value > 0 ? '+' : ''}${Number(value).toFixed(2)}`
+}
+
+function getPresetConfig(key) {
+  return analysisPresets.find((item) => item.key === key) || analysisPresets[0]
+}
+
+function buildAnalysisWindows(presetKey) {
+  const preset = getPresetConfig(presetKey)
+  const end = new Date()
+  const currentStart = new Date(end.getTime() - preset.durationMs)
+  const previousStart = new Date(currentStart.getTime() - preset.durationMs)
+
+  return {
+    preset,
+    end,
+    currentStart,
+    previousStart,
+  }
+}
+
+function buildAnalysisChart(resourceLabel, comparison, currentSeries, previousSeries, preset) {
+  return {
+    resourceLabel,
+    metricKey: comparison.metricKey,
+    metricLabel: comparison.metricLabel,
+    unit: comparison.unit,
+    currentWindow: comparison.currentWindow,
+    previousWindow: comparison.previousWindow,
+    averageDelta: comparison.averageDelta,
+    peakDelta: comparison.peakDelta,
+    currentSeries,
+    previousSeries,
+    durationMs: preset.durationMs,
+    presetDescription: preset.description,
+  }
 }
 
 function startAutoRefresh() {
@@ -147,10 +194,115 @@ async function loadDashboard() {
     dashboards.value = results
     recentAlerts.value = alerts
     cosDashboards.value = cosResults
+    await refreshVisibleAnalysis()
   } catch (error) {
     errorMessage.value = error?.response?.data?.detail || '监控数据加载失败，请检查后端配置或腾讯云接口返回。'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadMetricComparisons() {
+  const presetWindow = buildAnalysisWindows(cvmAnalysisPreset.value)
+  analysisLoading.value = true
+  const metricKeys = ['cpu', 'memory', 'network_in', 'network_out', 'disk_usage']
+
+  const results = await Promise.all(
+    instanceOptions.value.map(async (instance) => {
+      const metrics = await Promise.all(
+        metricKeys.map((metricKey) =>
+          loadAnalysisMetricBundle({
+            resourceType: 'cvm',
+            resourceId: instance.id,
+            metricKey,
+            resourceLabel: instance.name,
+            presetWindow,
+          }),
+        ),
+      )
+
+      return {
+        instance,
+        metrics: metrics.filter(Boolean),
+      }
+    }),
+  )
+
+  analysisLoading.value = false
+  return results
+}
+
+async function loadCosMetricComparisons() {
+  const presetWindow = buildAnalysisWindows(cosAnalysisPreset.value)
+  cosAnalysisLoading.value = true
+  const metricKeys = ['storage_size', 'object_count', 'network_in', 'network_out', 'request_get', 'request_put']
+
+  const results = await Promise.all(
+    cosBuckets.value.map(async (bucket) => {
+      const metrics = await Promise.all(
+        metricKeys.map((metricKey) =>
+          loadAnalysisMetricBundle({
+            resourceType: 'cos',
+            resourceId: bucket.name,
+            metricKey,
+            resourceLabel: bucket.label,
+            presetWindow,
+          }),
+        ),
+      )
+
+      return {
+        bucket,
+        metrics: metrics.filter(Boolean),
+      }
+    }),
+  )
+
+  cosAnalysisLoading.value = false
+  return results
+}
+
+async function loadAnalysisMetricBundle({ resourceType, resourceId, metricKey, resourceLabel, presetWindow }) {
+  try {
+    const [comparison, currentSeries, previousSeries] = await Promise.all([
+      fetchMetricComparison({
+        resourceType,
+        resourceId,
+        metricKey,
+        currentStart: toIsoString(presetWindow.currentStart),
+        currentEnd: toIsoString(presetWindow.end),
+        previousStart: toIsoString(presetWindow.previousStart),
+        previousEnd: toIsoString(presetWindow.currentStart),
+      }),
+      fetchMetricHistory({
+        resourceType,
+        resourceId,
+        metricKey,
+        startTime: toIsoString(presetWindow.currentStart),
+        endTime: toIsoString(presetWindow.end),
+      }),
+      fetchMetricHistory({
+        resourceType,
+        resourceId,
+        metricKey,
+        startTime: toIsoString(presetWindow.previousStart),
+        endTime: toIsoString(presetWindow.currentStart),
+      }),
+    ])
+
+    return buildAnalysisChart(resourceLabel, comparison, currentSeries, previousSeries, presetWindow.preset)
+  } catch {
+    return null
+  }
+}
+
+async function refreshVisibleAnalysis() {
+  if (activeTab.value === 'cvm-analysis' || metricComparisons.value.length) {
+    metricComparisons.value = await loadMetricComparisons()
+  }
+
+  if (activeTab.value === 'cos-analysis' || cosMetricComparisons.value.length) {
+    cosMetricComparisons.value = await loadCosMetricComparisons()
   }
 }
 
@@ -168,6 +320,28 @@ onMounted(() => {
   startAutoRefresh()
 })
 
+watch(activeTab, async (tab) => {
+  if (tab === 'cvm-analysis' && !metricComparisons.value.length) {
+    metricComparisons.value = await loadMetricComparisons()
+  }
+
+  if (tab === 'cos-analysis' && !cosMetricComparisons.value.length) {
+    cosMetricComparisons.value = await loadCosMetricComparisons()
+  }
+})
+
+watch(cvmAnalysisPreset, async () => {
+  if (activeTab.value === 'cvm-analysis' || metricComparisons.value.length) {
+    metricComparisons.value = await loadMetricComparisons()
+  }
+})
+
+watch(cosAnalysisPreset, async () => {
+  if (activeTab.value === 'cos-analysis' || cosMetricComparisons.value.length) {
+    cosMetricComparisons.value = await loadCosMetricComparisons()
+  }
+})
+
 onBeforeUnmount(() => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
@@ -182,7 +356,7 @@ onBeforeUnmount(() => {
         <p class="eyebrow">Tencent Cloud CVM</p>
         <h1>实例运行监控面板</h1>
         <p class="hero-text">
-          主机监控与对象存储监控共用一页，通过标签切换查看，既保留统一入口，也避免页面过长影响浏览效率。
+          主机监控、主机分析、对象存储监控和对象存储分析分开呈现，实时运行态和时间窗对比各看各的，版面会更清楚。
         </p>
       </div>
       <form class="control-panel" @submit.prevent="loadDashboard">
@@ -231,104 +405,118 @@ onBeforeUnmount(() => {
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
     <section class="view-tabs">
-      <button type="button" class="tab-button" :class="{ active: activeTab === 'cvm' }" @click="activeTab = 'cvm'">
-        CVM 主机
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cvm-monitor' }" @click="activeTab = 'cvm-monitor'">
+        CVM 监控
       </button>
-      <button type="button" class="tab-button" :class="{ active: activeTab === 'cos' }" @click="activeTab = 'cos'">
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cvm-analysis' }" @click="activeTab = 'cvm-analysis'">
+        CVM 分析
+      </button>
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cos-monitor' }" @click="activeTab = 'cos-monitor'">
         COS 存储
       </button>
+      <button type="button" class="tab-button" :class="{ active: activeTab === 'cos-analysis' }" @click="activeTab = 'cos-analysis'">
+        COS 存储分析
+      </button>
     </section>
 
-    <template v-if="activeTab === 'cvm'">
-    <section v-if="comparisonRows.length" class="comparison-panel">
-      <div class="comparison-title-row">
-        <div>
-          <p class="comparison-eyebrow">Dual Server Comparison</p>
-          <h2>双机实时对比</h2>
-        </div>
-        <p class="comparison-note">按最新值对照入口层与数据层，快速发现负载偏移与瓶颈热点。</p>
-      </div>
-
-      <div class="comparison-grid">
-        <article v-for="row in comparisonRows" :key="row.key" class="comparison-card">
-          <div class="comparison-card-header">
-            <h3>{{ row.label }}</h3>
-            <span>{{ row.unit }}</span>
-          </div>
-          <div class="comparison-values">
+    <template v-if="activeTab === 'cvm-monitor'">
+      <section class="instance-board">
+        <article v-for="item in dashboards" :key="item.instance.id" class="instance-panel">
+          <header class="instance-header">
             <div>
-              <p>{{ row.leftName }}</p>
-              <strong>{{ formatValue(row.leftValue) }}</strong>
+              <p class="instance-tag">{{ item.instance.region }}</p>
+              <h2>{{ item.instance.name }}</h2>
+              <p class="instance-meta">{{ item.instance.id }}</p>
             </div>
-            <div>
-              <p>{{ row.rightName }}</p>
-              <strong>{{ formatValue(row.rightValue) }}</strong>
+            <div class="instance-summary">
+              <span>更新时间 {{ new Date(item.dashboard.endTime).toLocaleString('zh-CN') }}</span>
+              <span class="status-chip">运行中</span>
+              <strong>{{ item.dashboard.series?.length || 0 }} 个指标</strong>
             </div>
-          </div>
-          <div class="comparison-footer">
-            <span>领先：{{ row.leader }}</span>
-            <span>差值：{{ row.delta === null ? '--' : formatValue(Math.abs(row.delta)) }}</span>
-          </div>
+          </header>
+
+          <section v-if="item.dashboard?.cards?.length" class="metric-grid">
+            <MetricCard v-for="card in item.dashboard.cards" :key="`${item.instance.id}-${card.key}`" :card="card" />
+          </section>
+
+          <section v-if="item.dashboard?.series?.length" class="chart-grid">
+            <MetricChart
+              v-for="seriesItem in item.dashboard.series"
+              :key="`${item.instance.id}-${seriesItem.key}`"
+              :series="seriesItem"
+            />
+          </section>
         </article>
-      </div>
-    </section>
-
-    <section class="instance-board">
-      <article v-for="item in dashboards" :key="item.instance.id" class="instance-panel">
-        <header class="instance-header">
-          <div>
-            <p class="instance-tag">{{ item.instance.region }}</p>
-            <h2>{{ item.instance.name }}</h2>
-            <p class="instance-meta">{{ item.instance.id }}</p>
-          </div>
-          <div class="instance-summary">
-            <span>更新时间 {{ new Date(item.dashboard.endTime).toLocaleString('zh-CN') }}</span>
-            <span class="status-chip">运行中</span>
-            <strong>{{ item.dashboard.series?.length || 0 }} 个指标</strong>
-          </div>
-        </header>
-
-        <section v-if="item.dashboard?.cards?.length" class="metric-grid">
-          <MetricCard v-for="card in item.dashboard.cards" :key="`${item.instance.id}-${card.key}`" :card="card" />
-        </section>
-
-        <section v-if="item.dashboard?.series?.length" class="chart-grid">
-          <MetricChart
-            v-for="seriesItem in item.dashboard.series"
-            :key="`${item.instance.id}-${seriesItem.key}`"
-            :series="seriesItem"
-          />
-        </section>
-      </article>
-    </section>
-
-    <section class="alerts-panel">
-      <div class="alerts-header">
-        <div>
-          <p class="comparison-eyebrow">Recent Alerts</p>
-          <h2>最近告警</h2>
-        </div>
-        <p class="comparison-note">只展示最近触发过的公网带宽阈值事件，便于快速回看异常时间点。</p>
-      </div>
-
-      <div v-if="recentAlerts.length" class="alerts-list">
-        <article v-for="alert in recentAlerts" :key="`${alert.instanceId}-${alert.metricKey}-${alert.timestamp}`" class="alert-item">
-          <div>
-            <p class="alert-title">{{ alert.metricLabel }} 超阈值</p>
-            <p class="alert-meta">{{ alert.instanceId }}</p>
-          </div>
-          <div class="alert-values">
-            <strong>{{ formatValue(alert.currentValue) }} Mbps</strong>
-            <span>阈值 {{ formatValue(alert.thresholdMbps) }} Mbps</span>
-          </div>
-          <time class="alert-time">{{ new Date(alert.timestamp).toLocaleString('zh-CN') }}</time>
-        </article>
-      </div>
-      <p v-else class="alerts-empty">最近还没有超过 50 Mbps 的公网带宽告警。</p>
-    </section>
+      </section>
     </template>
 
-    <template v-else>
+    <template v-else-if="activeTab === 'cvm-analysis'">
+      <section class="analysis-toolbar">
+        <div>
+          <p class="comparison-eyebrow">CVM Analysis</p>
+          <h2>趋势与窗口分析</h2>
+        </div>
+        <div class="analysis-preset-list">
+          <button
+            v-for="preset in analysisPresets"
+            :key="preset.key"
+            type="button"
+            class="ghost-button"
+            :class="{ active: cvmAnalysisPreset === preset.key }"
+            @click="cvmAnalysisPreset = preset.key"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <p class="comparison-note">{{ getPresetConfig(cvmAnalysisPreset).description }}</p>
+      </section>
+
+      <p v-if="analysisLoading" class="analysis-empty">分析图表加载中...</p>
+      <section v-for="entry in metricComparisons" :key="entry.instance.id" class="analysis-resource-section">
+        <div class="analysis-resource-header">
+          <div>
+            <p class="instance-tag">cvm</p>
+            <h2>{{ entry.instance.name }}</h2>
+            <p class="instance-meta">{{ entry.instance.id }}</p>
+          </div>
+        </div>
+        <div class="analysis-chart-grid">
+          <ComparisonTrendChart
+            v-for="metric in entry.metrics"
+            :key="`${entry.instance.id}-${metric.metricKey}`"
+            :chart="metric"
+          />
+        </div>
+      </section>
+      <p v-if="!analysisLoading && !metricComparisons.length" class="analysis-empty">当前时间窗下还没有可用于分析的 CVM 历史数据。</p>
+
+      <section class="alerts-panel">
+        <div class="alerts-header">
+          <div>
+            <p class="comparison-eyebrow">Recent Alerts</p>
+            <h2>最近告警</h2>
+          </div>
+          <p class="comparison-note">只展示最近触发过的公网带宽阈值事件，便于快速回看异常时间点。</p>
+        </div>
+
+        <div v-if="recentAlerts.length" class="alerts-list">
+          <article v-for="alert in recentAlerts" :key="`${alert.instanceId}-${alert.metricKey}-${alert.timestamp}`" class="alert-item">
+            <div>
+              <p class="alert-title">{{ alert.metricLabel }} 超阈值</p>
+              <p class="alert-meta">{{ alert.instanceId }}</p>
+            </div>
+            <div class="alert-values">
+              <strong>{{ formatValue(alert.currentValue) }} Mbps</strong>
+              <span>阈值 {{ formatValue(alert.thresholdMbps) }} Mbps</span>
+            </div>
+            <time class="alert-time">{{ new Date(alert.timestamp).toLocaleString('zh-CN') }}</time>
+          </article>
+        </div>
+        <p v-else class="alerts-empty">最近还没有超过 50 Mbps 的公网带宽告警。</p>
+      </section>
+    </template>
+
+    <template v-else-if="activeTab === 'cos-monitor'">
       <section class="alerts-panel cos-panel">
         <div class="alerts-header">
           <div>
@@ -367,6 +555,47 @@ onBeforeUnmount(() => {
           </article>
         </section>
       </section>
+    </template>
+
+    <template v-else>
+      <section class="analysis-toolbar">
+        <div>
+          <p class="comparison-eyebrow">COS Analysis</p>
+          <h2>存储与流量分析</h2>
+        </div>
+        <div class="analysis-preset-list">
+          <button
+            v-for="preset in analysisPresets"
+            :key="preset.key"
+            type="button"
+            class="ghost-button"
+            :class="{ active: cosAnalysisPreset === preset.key }"
+            @click="cosAnalysisPreset = preset.key"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+        <p class="comparison-note">{{ getPresetConfig(cosAnalysisPreset).description }}</p>
+      </section>
+
+      <p v-if="cosAnalysisLoading" class="analysis-empty">分析图表加载中...</p>
+      <section v-for="entry in cosMetricComparisons" :key="entry.bucket.name" class="analysis-resource-section">
+        <div class="analysis-resource-header">
+          <div>
+            <p class="instance-tag">cos</p>
+            <h2>{{ entry.bucket.label }}</h2>
+            <p class="instance-meta">{{ entry.bucket.name }}</p>
+          </div>
+        </div>
+        <div class="analysis-chart-grid">
+          <ComparisonTrendChart
+            v-for="metric in entry.metrics"
+            :key="`${entry.bucket.name}-${metric.metricKey}`"
+            :chart="metric"
+          />
+        </div>
+      </section>
+      <p v-if="!cosAnalysisLoading && !cosMetricComparisons.length" class="analysis-empty">当前时间窗下还没有可用于分析的 COS 历史数据。</p>
     </template>
   </main>
 </template>

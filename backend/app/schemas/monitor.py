@@ -58,3 +58,38 @@ class AlertEventResponse(BaseModel):
     threshold_mbps: float = Field(alias="thresholdMbps")
     current_value: float = Field(alias="currentValue")
     timestamp: datetime
+
+
+class HistoricalSeriesResponse(BaseModel):
+    resource_type: str = Field(alias="resourceType")
+    resource_id: str = Field(alias="resourceId")
+    metric_key: str = Field(alias="metricKey")
+    metric_label: str = Field(alias="metricLabel")
+    unit: str
+    start_time: datetime = Field(alias="startTime")
+    end_time: datetime = Field(alias="endTime")
+    points: List[TimePoint]
+    latest: Optional[float] = None
+    average: Optional[float] = None
+    peak: Optional[float] = None
+
+
+class MetricWindowSummary(BaseModel):
+    start_time: datetime = Field(alias="startTime")
+    end_time: datetime = Field(alias="endTime")
+    latest: Optional[float] = None
+    average: Optional[float] = None
+    peak: Optional[float] = None
+    point_count: int = Field(alias="pointCount")
+
+
+class MetricComparisonResponse(BaseModel):
+    resource_type: str = Field(alias="resourceType")
+    resource_id: str = Field(alias="resourceId")
+    metric_key: str = Field(alias="metricKey")
+    metric_label: str = Field(alias="metricLabel")
+    unit: str
+    current_window: MetricWindowSummary = Field(alias="currentWindow")
+    previous_window: MetricWindowSummary = Field(alias="previousWindow")
+    average_delta: Optional[float] = Field(default=None, alias="averageDelta")
+    peak_delta: Optional[float] = Field(default=None, alias="peakDelta")

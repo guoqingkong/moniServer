@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from app.config import Settings
+from app.repositories import AlertRepository, PollRunRecord, PollRunRepository
 from app.schemas.monitor import AlertEventResponse
 from app.services.email_service import EmailService
 from app.services.monitor_service import MonitorService
@@ -37,6 +38,8 @@ class BandwidthAlertService:
         self._state_path = Path(self._settings.bandwidth_alert_state_path)
         self._log_path = Path(self._settings.bandwidth_alert_log_path)
         self._known_alerts = self._load_state()
+        self._alert_repository = AlertRepository(settings)
+        self._poll_run_repository = PollRunRepository(settings)
 
     async def start(self) -> None:
         if self._running:
@@ -65,47 +68,86 @@ class BandwidthAlertService:
         return await asyncio.to_thread(self._check_once_sync)
 
     def _check_once_sync(self) -> List[BandwidthAlertEvent]:
+        started_at = datetime.now().astimezone().isoformat()
+        run_id = self._poll_run_repository.create(
+            PollRunRecord(
+                job_name="bandwidth_alert_check",
+                resource_type="cvm",
+                started_at=started_at,
+            )
+        )
         events: List[BandwidthAlertEvent] = []
         lookback_end = datetime.now().astimezone()
-        lookback_start = lookback_end - timedelta(minutes=5)
+        lookback_start = lookback_end - timedelta(minutes=max(self._settings.metrics_collection_lookback_minutes, 15))
+        points_written = 0
 
-        for instance_id in self._settings.monitor_instance_id_list:
-            for metric_key in ("network_in", "network_out"):
-                series = self._monitor_service.get_metric_series(
-                    instance_id=instance_id,
-                    metric_key=metric_key,
-                    start_time=lookback_start,
-                    end_time=lookback_end,
-                    period=60,
-                )
-                for point in series.points:
-                    if point.value is None or point.value <= self._settings.bandwidth_alert_threshold_mbps:
-                        continue
-
-                    alert_key = f"{instance_id}:{metric_key}:{point.timestamp.isoformat()}"
-                    if alert_key in self._known_alerts:
-                        continue
-
-                    event = BandwidthAlertEvent(
+        try:
+            for instance_id in self._settings.monitor_instance_id_list:
+                for metric_key in ("network_in", "network_out"):
+                    series = self._monitor_service.get_metric_series(
                         instance_id=instance_id,
                         metric_key=metric_key,
-                        metric_label=series.label,
-                        threshold_mbps=self._settings.bandwidth_alert_threshold_mbps,
-                        current_value=point.value,
-                        timestamp=point.timestamp.isoformat(),
+                        start_time=lookback_start,
+                        end_time=lookback_end,
+                        period=300,
                     )
-                    self._record_event(event)
-                    self._send_email(event)
-                    self._known_alerts[alert_key] = event.timestamp
-                    events.append(event)
+                    points_written += len(series.points)
+                    for point in series.points:
+                        if point.value is None or point.value <= self._settings.bandwidth_alert_threshold_mbps:
+                            continue
 
-        self._save_state()
-        return events
+                        alert_key = f"{instance_id}:{metric_key}:{point.timestamp.isoformat()}"
+                        if alert_key in self._known_alerts:
+                            continue
+
+                        event = BandwidthAlertEvent(
+                            instance_id=instance_id,
+                            metric_key=metric_key,
+                            metric_label=series.label,
+                            threshold_mbps=self._settings.bandwidth_alert_threshold_mbps,
+                            current_value=point.value,
+                            timestamp=point.timestamp.isoformat(),
+                        )
+                        self._record_event(event)
+                        self._send_email(event)
+                        self._known_alerts[alert_key] = event.timestamp
+                        events.append(event)
+
+            self._save_state()
+            self._poll_run_repository.update(
+                run_id,
+                finished_at=datetime.now().astimezone().isoformat(),
+                status="success",
+                error_message=None,
+                points_written=points_written,
+            )
+            return events
+        except Exception as exc:
+            self._poll_run_repository.update(
+                run_id,
+                finished_at=datetime.now().astimezone().isoformat(),
+                status="failed",
+                error_message=str(exc),
+                points_written=points_written,
+            )
+            raise
 
     def _record_event(self, event: BandwidthAlertEvent) -> None:
         self._ensure_parent(self._log_path)
         with self._log_path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+        self._alert_repository.save_event(
+            resource_type="cvm",
+            resource_id=event.instance_id,
+            metric_key=event.metric_key,
+            metric_label=event.metric_label,
+            threshold_value=event.threshold_mbps,
+            current_value=event.current_value,
+            triggered_at=event.timestamp,
+            notify_email=self._settings.bandwidth_alert_recipient,
+            notify_status="sent" if self._email_service.is_configured else "skipped",
+            message=f"{event.metric_label} exceeded {event.threshold_mbps:.2f} Mbps",
+        )
 
     def _send_email(self, event: BandwidthAlertEvent) -> None:
         if not self._email_service.is_configured:
@@ -143,26 +185,4 @@ class BandwidthAlertService:
         path.parent.mkdir(parents=True, exist_ok=True)
 
     def list_recent_events(self, limit: int = 20) -> List[AlertEventResponse]:
-        if not self._log_path.exists():
-            return []
-
-        results: List[AlertEventResponse] = []
-        with self._log_path.open("r", encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-                if not line:
-                    continue
-                payload = json.loads(line)
-                results.append(
-                    AlertEventResponse(
-                        instanceId=payload["instance_id"],
-                        metricKey=payload["metric_key"],
-                        metricLabel=payload["metric_label"],
-                        thresholdMbps=payload["threshold_mbps"],
-                        currentValue=payload["current_value"],
-                        timestamp=payload["timestamp"],
-                    )
-                )
-
-        results.sort(key=lambda item: item.timestamp, reverse=True)
-        return results[:limit]
+        return self._alert_repository.list_recent(limit=limit)

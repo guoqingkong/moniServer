@@ -4,6 +4,8 @@ from statistics import mean
 from typing import Dict, List, Optional, Tuple
 
 from app.clients.tencent_monitor import TencentMonitorClient
+from app.config import Settings
+from app.repositories import MonitorRepository
 from app.schemas.monitor import DashboardResponse, MetricCard, MetricSeries, TimePoint
 
 
@@ -27,8 +29,9 @@ METRICS: Tuple[MetricDefinition, ...] = (
 class MonitorService:
     namespace = "QCE/CVM"
 
-    def __init__(self, client: TencentMonitorClient) -> None:
+    def __init__(self, client: TencentMonitorClient, settings: Optional[Settings] = None) -> None:
         self._client = client
+        self._repository = MonitorRepository(settings) if settings else None
 
     def get_dashboard(
         self,
@@ -43,7 +46,7 @@ class MonitorService:
         resolved_period = period or self._select_period(resolved_start, resolved_end)
 
         series = [
-            self._build_series(
+            self._get_series_with_cache(
                 definition=definition,
                 instance_id=instance_id,
                 period=resolved_period,
@@ -94,6 +97,33 @@ class MonitorService:
             end_time=end_time,
         )
 
+    def _get_series_with_cache(
+        self,
+        definition: MetricDefinition,
+        instance_id: str,
+        period: int,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> MetricSeries:
+        cached = self._get_cached_series(
+            resource_type="cvm",
+            resource_id=instance_id,
+            definition_key=definition.key,
+            start_time=start_time,
+            end_time=end_time,
+            freshness_seconds=max(period * 2, 180),
+        )
+        if cached is not None:
+            return cached
+
+        return self._build_series(
+            definition=definition,
+            instance_id=instance_id,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
     def _build_series(
         self,
         definition: MetricDefinition,
@@ -113,7 +143,7 @@ class MonitorService:
         parsed_points = self._normalize_points(raw_points)
         values = [point.value for point in parsed_points if point.value is not None]
 
-        return MetricSeries(
+        series = MetricSeries(
             key=definition.key,  # type: ignore[arg-type]
             label=definition.label,
             unit=definition.unit,
@@ -122,6 +152,49 @@ class MonitorService:
             latest=values[-1] if values else None,
             average=round(mean(values), 2) if values else None,
             peak=max(values) if values else None,
+        )
+        if self._repository:
+            self._repository.save_metric_series("cvm", instance_id, series)
+        return series
+
+    def _get_cached_series(
+        self,
+        resource_type: str,
+        resource_id: str,
+        definition_key: str,
+        start_time: datetime,
+        end_time: datetime,
+        freshness_seconds: int,
+    ) -> Optional[MetricSeries]:
+        if not self._repository:
+            return None
+
+        historical = self._repository.get_historical_series(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            metric_key=definition_key,
+            start_time=start_time.isoformat(),
+            end_time=end_time.isoformat(),
+        )
+        if historical is None or not historical.points:
+            return None
+
+        latest_point = historical.points[-1].timestamp
+        if isinstance(latest_point, str):
+            latest_point = datetime.fromisoformat(latest_point)
+
+        if (end_time - latest_point).total_seconds() > freshness_seconds:
+            return None
+
+        return MetricSeries(
+            key=historical.metric_key,  # type: ignore[arg-type]
+            label=historical.metric_label,
+            unit=historical.unit,
+            period=self._select_period(start_time, end_time),
+            points=historical.points,
+            latest=historical.latest,
+            average=historical.average,
+            peak=historical.peak,
         )
 
     def _normalize_points(self, raw_points: List[Dict]) -> List[TimePoint]:

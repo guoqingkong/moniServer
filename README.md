@@ -50,6 +50,7 @@ uvicorn app.main:app --reload --port 8000
 - `SMTP_PASSWORD`
 - `SMTP_FROM_EMAIL`
 - `SMTP_USE_SSL`
+- `SQLITE_DB_PATH`
 
 ## 前端启动
 
@@ -85,3 +86,4 @@ npm run dev
 - 后端统一聚合多个指标，后续接缓存和告警会更方便。
 - 当前实现只面向 `QCE/CVM`。
 - 带宽告警日志默认写入 `backend/data/bandwidth_alerts.jsonl`。
+- SQLite 数据默认写入 `backend/data/monitor.db`，用于缓存监控点、告警事件和巡检记录。

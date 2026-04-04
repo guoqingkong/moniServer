@@ -191,6 +191,119 @@ select {
   gap: 12px;
 }
 
+.analysis-toolbar {
+  margin-top: 22px;
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 60px rgba(2, 8, 23, 0.28);
+  padding: 22px 24px;
+}
+
+.analysis-toolbar h2,
+.analysis-resource-header h2,
+.analysis-chart-header h3 {
+  margin: 8px 0 0;
+}
+
+.analysis-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.analysis-resource-section {
+  margin-top: 22px;
+  display: grid;
+  gap: 16px;
+}
+
+.analysis-resource-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analysis-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.analysis-chart-card {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 26px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 48px rgba(2, 8, 23, 0.28);
+  padding: 22px;
+}
+
+.analysis-chart-header {
+  display: grid;
+  gap: 18px;
+}
+
+.analysis-chart-eyebrow,
+.analysis-chart-note,
+.analysis-summary-item span,
+.analysis-empty {
+  margin: 0;
+}
+
+.analysis-chart-eyebrow {
+  color: #5eead4;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.analysis-chart-note,
+.analysis-summary-item span,
+.analysis-empty {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.analysis-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.analysis-summary-item {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 18px;
+  background: rgba(30, 41, 59, 0.45);
+  padding: 12px 14px;
+}
+
+.analysis-summary-item strong {
+  display: block;
+  margin-top: 8px;
+  color: #f8fafc;
+  font-size: 20px;
+}
+
+.analysis-summary-item small {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.analysis-chart-canvas {
+  width: 100%;
+  height: 320px;
+  margin-top: 18px;
+}
+
+.analysis-empty {
+  margin-top: 18px;
+}
+
 .tab-button {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 999px;
@@ -219,6 +332,14 @@ select {
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 60px rgba(2, 8, 23, 0.32);
   padding: 24px;
+}
+
+.window-panel {
+  background: rgba(19, 33, 58, 0.68);
+}
+
+.cos-window-panel {
+  background: rgba(12, 38, 44, 0.72);
 }
 
 .comparison-title-row {
@@ -256,6 +377,61 @@ select {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
+}
+
+.window-compare-list {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.window-compare-card {
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.58);
+  padding: 18px;
+}
+
+.window-compare-header h3,
+.window-metric-title,
+.window-metric-values span {
+  margin: 0;
+}
+
+.window-compare-header h3 {
+  margin-top: 8px;
+  font-size: 22px;
+}
+
+.window-metric-grid {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.window-metric-card {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 18px;
+  background: rgba(30, 41, 59, 0.45);
+  padding: 14px;
+}
+
+.window-metric-title {
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.window-metric-values {
+  margin-top: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.window-metric-values span {
+  color: #cbd5e1;
+  font-size: 13px;
 }
 
 .comparison-card {
@@ -548,6 +724,9 @@ select {
 @media (max-width: 1180px) {
   .hero-panel,
   .comparison-grid,
+  .window-compare-list,
+  .analysis-chart-grid,
+  .analysis-summary-grid,
   .chart-grid,
   .metric-grid,
   .metric-grid-cos,

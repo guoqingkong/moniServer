@@ -24,3 +24,13 @@ export async function fetchRecentAlerts(params) {
   const { data } = await http.get('/api/monitor/alerts/recent', { params })
   return data
 }
+
+export async function fetchMetricComparison(params) {
+  const { data } = await http.get('/api/monitor/compare', { params })
+  return data
+}
+
+export async function fetchMetricHistory(params) {
+  const { data } = await http.get('/api/monitor/history', { params })
+  return data
+}
