@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import Settings, get_settings
 from app.clients.tencent_monitor import TencentMonitorClient
-from app.repositories import MonitorRepository
+from app.repositories import MonitorRepository, PollRunRepository
 from app.schemas.monitor import (
     AlertEventResponse,
     DashboardResponse,
     HistoricalSeriesResponse,
     MetricComparisonResponse,
+    PollRunStatusResponse,
 )
 from app.services.bandwidth_alert_service import BandwidthAlertService
 from app.services.cos_monitor_service import CosMonitorService
@@ -49,6 +50,10 @@ def get_cos_monitor_service(settings: Settings = Depends(get_settings)) -> CosMo
 
 def get_monitor_repository(settings: Settings = Depends(get_settings)) -> MonitorRepository:
     return MonitorRepository(settings)
+
+
+def get_poll_run_repository(settings: Settings = Depends(get_settings)) -> PollRunRepository:
+    return PollRunRepository(settings)
 
 
 @router.get("/dashboard", response_model=DashboardResponse)
@@ -155,4 +160,15 @@ def compare_history(
     )
     if result is None:
         raise HTTPException(status_code=404, detail="No metric comparison data found for the given query.")
+    return result
+
+
+@router.get("/collector/status", response_model=PollRunStatusResponse)
+def get_collector_status(
+    repository: PollRunRepository = Depends(get_poll_run_repository),
+    settings: Settings = Depends(get_settings),
+) -> PollRunStatusResponse:
+    result = repository.get_latest("metric_collection", settings.metrics_collection_poll_seconds)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No collection runs found.")
     return result

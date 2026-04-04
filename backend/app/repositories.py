@@ -12,6 +12,7 @@ from app.schemas.monitor import (
     HistoricalSeriesResponse,
     MetricComparisonResponse,
     MetricSeries,
+    PollRunStatusResponse,
     MetricWindowSummary,
     TimePoint,
 )
@@ -274,3 +275,36 @@ class PollRunRepository:
                 """,
                 (finished_at, status, error_message, points_written, run_id),
             )
+
+    def get_latest(self, job_name: str, poll_seconds: int) -> Optional[PollRunStatusResponse]:
+        with get_connection(self._settings) as connection:
+            row = connection.execute(
+                """
+                SELECT job_name, status, started_at, finished_at, points_written, error_message
+                FROM poll_runs
+                WHERE job_name = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (job_name,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        finished_at = row["finished_at"]
+        next_run_at = None
+        if finished_at:
+            base_time = datetime.fromisoformat(finished_at) if isinstance(finished_at, str) else finished_at
+            next_run_at = datetime.fromtimestamp(base_time.timestamp() + poll_seconds, tz=base_time.tzinfo).replace(microsecond=0)
+
+        return PollRunStatusResponse(
+            jobName=row["job_name"],
+            status=row["status"],
+            startedAt=row["started_at"],
+            finishedAt=finished_at,
+            pointsWritten=row["points_written"],
+            errorMessage=row["error_message"],
+            pollSeconds=poll_seconds,
+            nextRunAt=next_run_at,
+        )

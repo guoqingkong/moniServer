@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import {
   fetchCosDashboard,
+  fetchCollectorStatus,
   fetchDashboard,
   fetchMetricComparison,
   fetchMetricHistory,
@@ -29,8 +30,11 @@ const cvmAnalysisPreset = ref('30m')
 const cosAnalysisPreset = ref('30m')
 const analysisLoading = ref(false)
 const cosAnalysisLoading = ref(false)
+const collectorStatus = ref(null)
+const collectorCountdown = ref('--')
 const autoRefreshSeconds = 60
 let refreshTimer = null
+let countdownTimer = null
 
 const quickRanges = [
   { label: '1 小时', value: 1 },
@@ -97,6 +101,37 @@ function formatDelta(value) {
   return `${value > 0 ? '+' : ''}${Number(value).toFixed(2)}`
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return '--'
+  }
+  return new Date(value).toLocaleString('zh-CN')
+}
+
+function formatSeconds(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+    return '--'
+  }
+
+  if (seconds <= 0) {
+    return '即将执行'
+  }
+
+  const minutes = Math.floor(seconds / 60)
+  const remainSeconds = seconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(remainSeconds).padStart(2, '0')}`
+}
+
+function updateCollectorCountdown() {
+  if (!collectorStatus.value?.nextRunAt) {
+    collectorCountdown.value = '--'
+    return
+  }
+
+  const diffSeconds = Math.max(0, Math.floor((new Date(collectorStatus.value.nextRunAt).getTime() - Date.now()) / 1000))
+  collectorCountdown.value = formatSeconds(diffSeconds)
+}
+
 function getPresetConfig(key) {
   return analysisPresets.find((item) => item.key === key) || analysisPresets[0]
 }
@@ -142,6 +177,15 @@ function startAutoRefresh() {
       loadDashboard()
     }
   }, autoRefreshSeconds * 1000)
+}
+
+function startCollectorCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+  }
+
+  updateCollectorCountdown()
+  countdownTimer = setInterval(updateCollectorCountdown, 1000)
 }
 
 async function loadConfig() {
@@ -194,6 +238,8 @@ async function loadDashboard() {
     dashboards.value = results
     recentAlerts.value = alerts
     cosDashboards.value = cosResults
+    collectorStatus.value = await fetchCollectorStatus().catch(() => null)
+    updateCollectorCountdown()
     await refreshVisibleAnalysis()
   } catch (error) {
     errorMessage.value = error?.response?.data?.detail || '监控数据加载失败，请检查后端配置或腾讯云接口返回。'
@@ -318,6 +364,7 @@ async function initialize() {
 onMounted(() => {
   initialize()
   startAutoRefresh()
+  startCollectorCountdown()
 })
 
 watch(activeTab, async (tab) => {
@@ -346,6 +393,9 @@ onBeforeUnmount(() => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
   }
+  if (countdownTimer) {
+    clearInterval(countdownTimer)
+  }
 })
 </script>
 
@@ -357,6 +407,12 @@ onBeforeUnmount(() => {
         <h1>实例运行监控面板</h1>
         <p class="hero-text">
           主机监控、主机分析、对象存储监控和对象存储分析分开呈现，实时运行态和时间窗对比各看各的，版面会更清楚。
+        </p>
+        <p class="hero-meta-line">
+          最后一次采集 {{ formatDateTime(collectorStatus?.finishedAt || collectorStatus?.startedAt) }}
+          · 下一次采集 {{ collectorCountdown }}
+          · 本轮写入 {{ collectorStatus?.pointsWritten ?? '--' }} 点
+          · 状态 {{ collectorStatus?.status || '--' }}
         </p>
       </div>
       <form class="control-panel" @submit.prevent="loadDashboard">

@@ -93,3 +93,14 @@ class MetricComparisonResponse(BaseModel):
     previous_window: MetricWindowSummary = Field(alias="previousWindow")
     average_delta: Optional[float] = Field(default=None, alias="averageDelta")
     peak_delta: Optional[float] = Field(default=None, alias="peakDelta")
+
+
+class PollRunStatusResponse(BaseModel):
+    job_name: str = Field(alias="jobName")
+    status: str
+    started_at: datetime = Field(alias="startedAt")
+    finished_at: Optional[datetime] = Field(default=None, alias="finishedAt")
+    points_written: int = Field(alias="pointsWritten")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
+    poll_seconds: int = Field(alias="pollSeconds")
+    next_run_at: Optional[datetime] = Field(default=None, alias="nextRunAt")

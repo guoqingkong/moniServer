@@ -34,3 +34,8 @@ export async function fetchMetricHistory(params) {
   const { data } = await http.get('/api/monitor/history', { params })
   return data
 }
+
+export async function fetchCollectorStatus() {
+  const { data } = await http.get('/api/monitor/collector/status')
+  return data
+}
